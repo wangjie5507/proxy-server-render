@@ -1,7 +1,7 @@
 """tools/proxy_server.py — 内容水龙头 API 代理 + Stripe 自动续费。
 
 一键部署到 Render.com (免费). 客户应用不接触真实 API Key.
-同时充当 Key Server + Pixabay/Pexels 中转加速 + Stripe webhook.
+同时充当 Key Server + Pixabay/Pexels/HeyGen 中转加速 + Stripe webhook.
 """
 import os, requests, json, base64
 from datetime import datetime, timedelta
@@ -16,7 +16,9 @@ API_KEYS = {
     "MOONSHOT_API_KEY":  os.environ.get("MOONSHOT_API_KEY", ""),
     "PIXABAY_API_KEY":   os.environ.get("PIXABAY_API_KEY", "47648800-ed68747d593dab76101c57a82"),
     "PEXELS_API_KEY":    os.environ.get("PEXELS_API_KEY", "kX2kERzIBkk2jcOAGMqN9zMxLYlMiglj9eLYctjWqY1MhOdoYHobqgW2"),
+    "HEYGEN_API_KEY":   os.environ.get("HEYGEN_API_KEY", ""),
 }
+HEYGEN_BASE = "https://api.heygen.com"
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
 OPENAI_PROXY = {
@@ -70,6 +72,22 @@ def proxy_pexels_photos():
         headers={"Authorization": API_KEYS["PEXELS_API_KEY"]}, params=request.args, timeout=15)
     return jsonify(resp.json()), resp.status_code
 
+# HeyGen 中转代理
+@app.route("/heygen/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE"])
+def proxy_heygen(subpath):
+    key = API_KEYS.get("HEYGEN_API_KEY", "")
+    if not key:
+        return jsonify({"error": "HeyGen API key not configured"}), 500
+    method = request.method
+    url = f"{HEYGEN_BASE}/{subpath}"
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    params = request.args.to_dict() if method == "GET" else None
+    json_body = None
+    if method in ("POST", "PUT"):
+        json_body = request.get_json(force=True, silent=True) or {}
+    resp = requests.request(method, url, headers=headers, params=params, json=json_body, timeout=60)
+    return jsonify(resp.json()), resp.status_code
+
 # Stripe 自动续费: 收款后自动生成新授权码
 @app.route("/stripe/webhook", methods=["POST"])
 def stripe_webhook():
@@ -95,7 +113,7 @@ def stripe_webhook():
 
 @app.route("/")
 def health():
-    return jsonify({"status":"ok","providers":list(OPENAI_PROXY.keys())})
+    return jsonify({"status":"ok","providers":list(OPENAI_PROXY.keys())+["heygen","pixabay","pexels"]})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
