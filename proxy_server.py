@@ -3,9 +3,10 @@
 一键部署到 Render.com (免费). 客户应用不接触真实 API Key.
 同时充当 Key Server + Pixabay/Pexels/HeyGen 中转加速 + Stripe webhook.
 """
-import os, requests, json, base64
+import os, requests, json, base64, time as time_module
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
+import jwt
 
 app = Flask(__name__)
 
@@ -17,8 +18,11 @@ API_KEYS = {
     "PIXABAY_API_KEY":   os.environ.get("PIXABAY_API_KEY", "47648800-ed68747d593dab76101c57a82"),
     "PEXELS_API_KEY":    os.environ.get("PEXELS_API_KEY", "kX2kERzIBkk2jcOAGMqN9zMxLYlMiglj9eLYctjWqY1MhOdoYHobqgW2"),
     "HEYGEN_API_KEY":   os.environ.get("HEYGEN_API_KEY", ""),
+    "KLING_ACCESS_KEY": os.environ.get("KLING_ACCESS_KEY", ""),
+    "KLING_SECRET_KEY": os.environ.get("KLING_SECRET_KEY", ""),
 }
 HEYGEN_BASE = "https://api.heygen.com"
+KLING_BASE = "https://api.klingai.com"
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
 OPENAI_PROXY = {
@@ -88,6 +92,30 @@ def proxy_heygen(subpath):
     resp = requests.request(method, url, headers=headers, params=params, json=json_body, timeout=60)
     return jsonify(resp.json()), resp.status_code
 
+# Kling AI 中转代理 (JWT 鉴权)
+def _kling_token():
+    ak = API_KEYS.get("KLING_ACCESS_KEY", "")
+    sk = API_KEYS.get("KLING_SECRET_KEY", "")
+    if not ak or not sk:
+        return None
+    payload = {"iss": ak, "exp": int(time_module.time()) + 1800, "nbf": int(time_module.time()) - 5}
+    return jwt.encode(payload, sk, algorithm="HS256")
+
+@app.route("/kling/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE"])
+def proxy_kling(subpath):
+    token = _kling_token()
+    if not token:
+        return jsonify({"error": "Kling API keys not configured"}), 500
+    method = request.method
+    url = f"{KLING_BASE}/{subpath}"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    params = request.args.to_dict() if method == "GET" else None
+    json_body = None
+    if method in ("POST", "PUT"):
+        json_body = request.get_json(force=True, silent=True) or {}
+    resp = requests.request(method, url, headers=headers, params=params, json=json_body, timeout=120)
+    return jsonify(resp.json()), resp.status_code
+
 # Stripe 自动续费: 收款后自动生成新授权码
 @app.route("/stripe/webhook", methods=["POST"])
 def stripe_webhook():
@@ -113,7 +141,7 @@ def stripe_webhook():
 
 @app.route("/")
 def health():
-    return jsonify({"status":"ok","providers":list(OPENAI_PROXY.keys())+["heygen","pixabay","pexels"]})
+    return jsonify({"status":"ok","providers":list(OPENAI_PROXY.keys())+["heygen","kling","pixabay","pexels"]})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
