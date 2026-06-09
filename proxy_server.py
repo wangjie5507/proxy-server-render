@@ -31,7 +31,7 @@ API_KEYS = {
     "KLING_SECRET_KEY": os.environ.get("KLING_SECRET_KEY", ""),
 }
 HEYGEN_BASE = "https://api.heygen.com"
-KLING_BASE = "https://api.klingai.com"
+KLING_BASE = "https://api-singapore.klingai.com"
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 LICENSE_DIR = Path("licenses")  # Render 持久化磁盘
 
